@@ -3,10 +3,18 @@ package main
 import (
 	"context"
 	"log/slog"
+	"math/rand"
 	"time"
 
+	"flag"
+	"fmt"
 	"github.com/dej4vu/timewheel"
 	"github.com/dej4vu/timewheel/pkg/redis/goredis"
+)
+
+var (
+	clientId = flag.String("clientId", "client1", "client id")
+	count    = flag.Int64("count", 10000000, "执行次数")
 )
 
 const (
@@ -18,55 +26,44 @@ const (
 
 // 任务处理函数
 func handle(ctx context.Context, task *timewheel.RTaskElement) error {
-	slog.With("TimeWheel", "example").Info("task", slog.Any("RTaskElement", task))
+	at := time.Unix(task.ExecuteAtUnix, 0).Format(time.DateTime)
+	slog.Info("get task", slog.Any("key", task.Key), slog.Any("executeAt", at))
 	return nil
 }
 
 func main() {
+	flag.Parse()
 	client := goredis.NewClient(network, address, password)
 
 	rTimeWheel := timewheel.NewRTimeWheel(client, handle)
 
 	ctx := context.Background()
 
-	if err := rTimeWheel.AddTask(ctx, "test1", timewheel.NewRTaskElement("msg1", "test"),
-		time.Now().Add(time.Second)); err != nil {
+	ticker := time.Tick(1 * time.Millisecond)
+
+	var i int64
+	for {
+		select {
+		case <-ticker:
+			i++
+			if i <= *count {
+				i := i
+				go addTask(ctx, i, rTimeWheel)
+			}
+		}
+	}
+
+}
+
+func addTask(ctx context.Context, i int64, tw *timewheel.RTimeWheel) {
+	key := fmt.Sprintf("key_%s_%d", *clientId, i)
+	msg := fmt.Sprintf("simple message from timewheel %d", i)
+	rnd := rand.Intn(3600) + 1
+	if err := tw.AddTask(ctx, key,
+		timewheel.NewRTaskElement(msg, "test"),
+		time.Now().Add(time.Duration(rnd)*time.Second)); err != nil {
 		slog.Error("add task err", slog.Any("error", err))
 		return
 	}
-
-	if err := rTimeWheel.AddTask(ctx, "test1", timewheel.NewRTaskElement("msg1", "test"),
-		time.Now().Add(time.Second)); err != nil {
-		slog.Error("add task err", slog.Any("error", err))
-		return
-	}
-
-	//新增任务
-	t2 := time.Now().Add(140 * time.Second)
-
-	if err := rTimeWheel.AddTask(ctx, "test2", timewheel.NewRTaskElement("msg2", "test"),
-		t2); err != nil {
-		slog.Error("add task err", slog.Any("error", err))
-		return
-	}
-
-	// 删除任务
-	rTimeWheel.RemoveTask(ctx, "test2", t2)
-
-	// 新增任务
-	if err := rTimeWheel.AddTask(ctx, "test3", timewheel.NewRTaskElement("msg3", "test"),
-		time.Now().Add(120*time.Second)); err != nil {
-		slog.Error("add task err", slog.Any("error", err))
-		return
-	}
-
-	// 新增任务
-	if err := rTimeWheel.AddTask(ctx, "test4", timewheel.NewRTaskElement("msg4", "test"),
-		time.Now().Add(130*time.Second)); err != nil {
-		slog.Error("add task err", slog.Any("error", err))
-		return
-	}
-
-	select {}
-
+	slog.Info("add task", slog.Any("key", key))
 }
