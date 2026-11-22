@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dej4vu/timewheel/pkg/redis"
 	"github.com/dej4vu/timewheel/pkg/util"
 )
 
@@ -421,5 +422,131 @@ func TestMalformedMemberNotExecuted(t *testing.T) {
 	}
 	if n := calls.Load(); n != 0 {
 		t.Errorf("malformed member executed %d times, want 0", n)
+	}
+}
+
+// TestLegacyShardDiscovery 升级兼容：旧版本写入的分片没有 registry 条目，
+// 引擎必须仍能发现并执行（当前分钟分片 + 历史滞留分片两条路径）
+func TestLegacyShardDiscovery(t *testing.T) {
+	driver := testStores(t)[0]
+	now := time.Now()
+	curMinute := util.GetTimeMinuteStr(now)
+	pastMinute := util.GetTimeMinuteStr(now.Add(-2 * time.Minute))
+	flushTimewheelKeys(t, driver, pendingKey(curMinute), pendingKey(pastMinute), delSetKey(curMinute), delSetKey(pastMinute))
+
+	// 不登记 registry，仅写入旧格式分片（模拟旧版本实例的写入）
+	s := newRedisScripts(driver)
+	ctx := context.Background()
+	legacyCur := `{"key":"legacy-cur","msg":"m","type":"t","executeAtUnix":` + fmt.Sprint(now.Add(-time.Second).Unix()) + `}`
+	legacyPast := `{"key":"legacy-past","msg":"m","type":"t","executeAtUnix":` + fmt.Sprint(now.Add(-2*time.Minute).Unix()) + `}`
+	if err := s.pushRaw(ctx, pendingKey(curMinute), now.Add(-time.Second).UnixMilli(), legacyCur); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.pushRaw(ctx, pendingKey(pastMinute), now.Add(-2*time.Minute).Unix(), legacyPast); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	got := map[string]bool{}
+	handle := func(_ context.Context, task *RTaskElement) error {
+		mu.Lock()
+		defer mu.Unlock()
+		got[task.Key] = true
+		return nil
+	}
+	tw, err := NewRTimeWheelWithOptions(driver, handle, fastOpts()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tw.Stop()
+
+	if !eventually(t, 8*time.Second, 100*time.Millisecond, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return got["legacy-cur"] && got["legacy-past"]
+	}) {
+		mu.Lock()
+		defer mu.Unlock()
+		t.Fatalf("legacy shards without registry entries not discovered: %v", got)
+	}
+}
+
+// claimBlockingStore 在 claim 脚本执行前阻塞，用于确定性复现
+// Shutdown 与 run goroutine 内 tick 的 Add/Wait 竞态
+type claimBlockingStore struct {
+	redis.Store
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *claimBlockingStore) Eval(ctx context.Context, src string, keys []string, args []interface{}) (interface{}, error) {
+	if src == redis.ClaimTasksLuaScript {
+		select {
+		case s.entered <- struct{}{}:
+		default:
+		}
+		<-s.release
+	}
+	return s.Store.Eval(ctx, src, keys, args)
+}
+
+// TestShutdownWaitsForFinalTickClaim 回归：Shutdown 必须等待"最后一个 tick
+// 刚领取、尚未 wg.Add 完成"的任务结算，不得提前返回（Add 与 Wait 并发误用）
+func TestShutdownWaitsForFinalTickClaim(t *testing.T) {
+	driver := testStores(t)[0]
+	now := time.Now()
+	minute := util.GetTimeMinuteStr(now)
+	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
+
+	blocking := &claimBlockingStore{
+		Store:   driver,
+		entered: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+	var done atomic.Bool
+	handle := func(_ context.Context, task *RTaskElement) error {
+		time.Sleep(300 * time.Millisecond)
+		done.Store(true)
+		return nil
+	}
+
+	tw, err := NewRTimeWheelWithOptions(blocking, handle,
+		append(fastOpts(), WithLease(5*time.Second), WithHandlerTimeout(2*time.Second))...)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 任务在首个 tick 前已到期
+	if err := tw.AddTask(context.Background(), "sd-race",
+		&RTaskElement{Msg: "m", Type: "t"}, now.Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	// 等 run goroutine 的 tick 进入 claim 并被阻塞
+	select {
+	case <-blocking.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("claim never blocked")
+	}
+
+	res := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		res <- tw.Shutdown(ctx)
+	}()
+	time.Sleep(100 * time.Millisecond) // 确保 Shutdown 已进入等待
+	close(blocking.release)
+
+	select {
+	case err := <-res:
+		if err != nil {
+			t.Fatalf("Shutdown: %v", err)
+		}
+		if !done.Load() {
+			t.Fatal("Shutdown returned before the task claimed in the final tick settled")
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("Shutdown did not return")
 	}
 }

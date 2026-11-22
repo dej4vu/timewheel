@@ -27,6 +27,8 @@ func Test_LuaScript(t *testing.T) {
 		{"ZRangeByScoreLuaScript", redis.ZRangeByScoreLuaScript},
 		{"StatsLuaScript", redis.StatsLuaScript},
 		{"DeleteKeysLuaScript", redis.DeleteKeysLuaScript},
+		{"ScanStepLuaScript", redis.ScanStepLuaScript},
+		{"RegisterMinuteLuaScript", redis.RegisterMinuteLuaScript},
 		{"DeleteTaskLuaScript", redis.DeleteTaskLuaScript},
 	}
 	for _, s := range scripts {

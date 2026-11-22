@@ -150,6 +150,34 @@ func (s *redisScripts) pushRaw(ctx context.Context, key string, score int64, mem
 	return nil
 }
 
+// scanStep 执行单步 SCAN，返回新游标与发现的分片分钟列表
+func (s *redisScripts) scanStep(ctx context.Context, cursor string) (string, []string, error) {
+	reply, err := s.store.Eval(ctx, redis.ScanStepLuaScript, nil, []interface{}{cursor})
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to scan shards: %w", err)
+	}
+	items := gocast.ToInterfaceSlice(reply)
+	if len(items) == 0 {
+		return "", nil, fmt.Errorf("invalid scan reply: %v", reply)
+	}
+	next := gocast.ToString(items[0])
+	minutes := make([]string, 0, len(items)-1)
+	for _, item := range items[1:] {
+		minutes = append(minutes, gocast.ToString(item))
+	}
+	return next, minutes, nil
+}
+
+// registerMinute 将非空分片登记进 registry（score=0，历史滞留优先扫描）
+func (s *redisScripts) registerMinute(ctx context.Context, minuteStr string) error {
+	_, err := s.store.Eval(ctx, redis.RegisterMinuteLuaScript,
+		[]string{pendingKey(minuteStr), registryKey}, []interface{}{minuteStr})
+	if err != nil {
+		return fmt.Errorf("failed to register minute: %w", err)
+	}
+	return nil
+}
+
 // minuteOf 从执行时间推导分钟字符串与分钟起始毫秒
 func minuteOf(executeAt time.Time) (minuteStr string, minuteStartMs int64) {
 	return util.GetTimeMinuteStr(executeAt), util.MinuteStartMs(executeAt)
