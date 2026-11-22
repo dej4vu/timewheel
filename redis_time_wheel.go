@@ -15,26 +15,6 @@ import (
 
 var log = slog.Default().With("TimeWheel", "core")
 
-// RTaskElement 任务明细
-type RTaskElement struct {
-	// 任务 key
-	Key string `json:"key"`
-	// 任务内容
-	Msg string `json:"msg"`
-	// 任务类型
-	Type string `json:"type"`
-	// 执行时间
-	ExecuteAtUnix int64 `json:"executeAtUnix"`
-}
-
-// NewRTaskElement 创建新任务
-func NewRTaskElement(msg string, _type string) *RTaskElement {
-	return &RTaskElement{
-		Msg:  msg,
-		Type: _type,
-	}
-}
-
 // RTimeWheel redis实现的分布式时间轮
 type RTimeWheel struct {
 	// 内置的单例工具，用于保证 stopc 只被关闭一次
