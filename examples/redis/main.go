@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
-	"log/slog"
-	"math/rand"
-	"time"
-
 	"flag"
 	"fmt"
+	"log/slog"
+	"math/rand"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
 	"github.com/dej4vu/timewheel"
 	"github.com/dej4vu/timewheel/pkg/redis/goredis"
 )
@@ -24,7 +27,7 @@ const (
 	password = ""
 )
 
-// 任务处理函数
+// 任务处理函数（生产环境必须按 task.Key 幂等）
 func handle(ctx context.Context, task *timewheel.RTaskElement) error {
 	at := time.Unix(task.ExecuteAtUnix, 0).Format(time.DateTime)
 	slog.Info("get task", slog.Any("key", task.Key), slog.Any("executeAt", at))
@@ -41,6 +44,9 @@ func main() {
 
 	ticker := time.Tick(1 * time.Millisecond)
 
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
 	var i int64
 	for {
 		select {
@@ -50,9 +56,19 @@ func main() {
 				i := i
 				go addTask(ctx, i, rTimeWheel)
 			}
+		case <-quit:
+			goto quit
 		}
 	}
 
+quit:
+	// 优雅停止：停止领取并等待在途任务结算；超时的由租约回收，不静默丢弃
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := rTimeWheel.Shutdown(shutdownCtx); err != nil {
+		slog.Warn("shutdown timeout, in-flight tasks will be lease-recovered", slog.Any("err", err))
+	}
+	slog.Info("process exited")
 }
 
 func addTask(ctx context.Context, i int64, tw *timewheel.RTimeWheel) {
