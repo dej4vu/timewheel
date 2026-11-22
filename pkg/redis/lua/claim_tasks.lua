@@ -89,17 +89,20 @@ end
 
 zremChunks(pendingKey, removed)
 
+-- zadd 参数为 score/member 严格配对，同 score 批量写入需交错展开
 for i = 1, #claimed, 500 do
-    local batch = { leaseUntil }
+    local batch = {}
     for j = i, math.min(i + 499, #claimed) do
+        batch[#batch + 1] = leaseUntil
         batch[#batch + 1] = claimed[j]
     end
     redis.call('zadd', processingKey, unpack(batch))
 end
 
 for i = 1, #malformed, 500 do
-    local batch = { nowMs }
+    local batch = {}
     for j = i, math.min(i + 499, #malformed) do
+        batch[#batch + 1] = nowMs
         batch[#batch + 1] = malformed[j]
     end
     redis.call('zadd', deadKey, unpack(batch))
