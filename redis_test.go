@@ -38,13 +38,37 @@ func driverName(store redis.Store) string {
 	return fmt.Sprintf("%T", store)
 }
 
-// flushTimewheelKeys 清理全局 key 与指定附加 key（测试隔离用）
+// flushTimewheelKeys 清理全局 key 与全部分片 key（测试隔离用）。
+// 通过 SCAN 发现遗留分片，避免上一次运行/中断留下的旧任务污染断言。
 func flushTimewheelKeys(t *testing.T, store redis.Store, extraKeys ...string) {
 	t.Helper()
+	ctx := context.Background()
+	s := newRedisScripts(store)
+
 	keys := append([]string{registryKey, processingKey, deadKey}, extraKeys...)
-	_, err := store.Eval(context.Background(), redis.DeleteKeysLuaScript, keys, nil)
-	if err != nil {
-		t.Fatalf("flush keys %v: %v", keys, err)
+	cursor := "0"
+	for {
+		next, minutes, err := s.scanStep(ctx, cursor)
+		if err != nil {
+			t.Fatalf("scan shards: %v", err)
+		}
+		for _, minute := range minutes {
+			keys = append(keys, pendingKey(minute), delSetKey(minute))
+		}
+		if next == "0" {
+			break
+		}
+		cursor = next
+	}
+
+	for i := 0; i < len(keys); i += 500 {
+		end := i + 500
+		if end > len(keys) {
+			end = len(keys)
+		}
+		if _, err := store.Eval(ctx, redis.DeleteKeysLuaScript, keys[i:end], nil); err != nil {
+			t.Fatalf("flush keys %v: %v", keys[i:end], err)
+		}
 	}
 }
 

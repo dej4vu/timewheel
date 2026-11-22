@@ -11,12 +11,14 @@ import (
 	"github.com/dej4vu/timewheel/pkg/util"
 )
 
-// fastOpts 面向集成测试的极速参数
+// fastOpts 面向集成测试的极速参数。
+// lease 取 5s 而非贴近 handler 时长：at-least-once 语义允许租约过期后重投，
+// 断言"恰好一次"的用例必须让租约远大于测试窗口，否则 -race 调度抖动会产生合法重投。
 func fastOpts(extra ...RTimeWheelOption) []RTimeWheelOption {
 	base := []RTimeWheelOption{
 		WithTickInterval(50 * time.Millisecond),
 		WithHandlerTimeout(200 * time.Millisecond),
-		WithLease(500 * time.Millisecond),
+		WithLease(5 * time.Second),
 		WithBackoff(50*time.Millisecond, 200*time.Millisecond),
 		WithClaimBatch(100),
 		WithMaxConcurrency(32),
