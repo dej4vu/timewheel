@@ -81,10 +81,10 @@ func TestDecodeLegacyJSONMember(t *testing.T) {
 
 func TestDecodeMalformed(t *testing.T) {
 	bad := []string{
-		"",                                  // empty
-		"v1\x1fk1\x1f1\x1fc1",               // 4 segments
-		"v2\x1fk1\x1f1\x1fc1\x1f{}",         // wrong version
-		"v1\x1fk1\x1fabc\x1fc1\x1f{}",       // non-numeric attempt
+		"",                                   // empty
+		"v1\x1fk1\x1f1\x1fc1",                // 4 segments
+		"v2\x1fk1\x1f1\x1fc1\x1f{}",          // wrong version
+		"v1\x1fk1\x1fabc\x1fc1\x1f{}",        // non-numeric attempt
 		"v1\x1fk1\x1f1\x1fc1\x1f{}\x1fextra", // split with 5 cuts -> handled by SplitN(5), payload retains extra sep? must not error on extra sep
 	}
 	// note: the last case is actually valid per SplitN(5) semantics; assert it decodes with payload containing the remainder

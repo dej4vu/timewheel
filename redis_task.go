@@ -105,6 +105,8 @@ const (
 	OutcomeDeadLettered Outcome = "dead_lettered"
 	// OutcomeAckFailed handler 成功但 ACK 未送达（任务将由租约回收重投）
 	OutcomeAckFailed Outcome = "ack_failed"
+	// OutcomeRemoved 执行失败时任务已被 RemoveTask 取消，不再重试
+	OutcomeRemoved Outcome = "removed"
 )
 
 // TaskResult 是结果钩子收到的单笔任务执行结果
