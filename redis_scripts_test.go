@@ -336,7 +336,9 @@ func TestClaimMalformedToDead(t *testing.T) {
 	// 信封段数错误 与 坏 JSON 裸 member
 	bad1 := "v1\x1fk1\x1f1" // 段数不足
 	bad2 := `{"key":`       // 损坏 JSON
-	for i, m := range []string{bad1, bad2} {
+	// 合法 JSON 裸 member：legacy 兼容分支已删除，也必须进死信而非执行
+	bad3 := `{"key":"legacy-1","msg":"m","type":"t","executeAtUnix":1700000000}`
+	for i, m := range []string{bad1, bad2, bad3} {
 		if err := s.pushRaw(ctx, pendingKey(minute), time.Now().Add(-time.Second).UnixMilli(), m); err != nil {
 			t.Fatal(i, err)
 		}
@@ -349,7 +351,7 @@ func TestClaimMalformedToDead(t *testing.T) {
 	if len(claimed) != 0 {
 		t.Fatalf("malformed should not be claimed, got %v", claimed)
 	}
-	if dead := zrangeAll(t, driver, deadKey); len(dead) != 2 {
+	if dead := zrangeAll(t, driver, deadKey); len(dead) != 3 {
 		t.Fatalf("malformed members should go to dead, got %d", len(dead))
 	}
 }
