@@ -325,40 +325,6 @@ func TestRecoverDeadOnMaxAttempts(t *testing.T) {
 	}
 }
 
-func TestClaimLegacyMember(t *testing.T) {
-	driver := testStore(t)
-	now := time.Now()
-	minute := util.GetTimeMinuteStr(now)
-	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
-	s := newRedisScripts(driver)
-	ctx := context.Background()
-
-	// 旧格式：裸 JSON member，score 为秒级时间戳（已过期）
-	legacy := `{"key":"legacy-1","msg":"m","type":"t","executeAtUnix":1700000000}`
-	if err := s.pushRaw(ctx, pendingKey(minute), time.Now().Add(-time.Minute).Unix(), legacy); err != nil {
-		t.Fatal(err)
-	}
-
-	claimed, err := s.claim(ctx, minute, 10, time.Second, "lb")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(claimed) != 1 {
-		t.Fatalf("legacy member should be claimed, got %d", len(claimed))
-	}
-	env, err := decodeEnvelope(claimed[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if env.Key != "legacy-1" || env.Attempt != 1 {
-		t.Errorf("legacy claim envelope: %+v", env)
-	}
-	task, err := decodeTaskPayload(env.Payload)
-	if err != nil || task.Key != "legacy-1" {
-		t.Errorf("legacy payload: %v %+v", err, task)
-	}
-}
-
 func TestClaimMalformedToDead(t *testing.T) {
 	driver := testStore(t)
 	now := time.Now()

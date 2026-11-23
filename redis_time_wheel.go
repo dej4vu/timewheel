@@ -92,7 +92,6 @@ func NewRTimeWheelWithOptions(store redis.Store, handle func(context.Context, *R
 		runDone:    make(chan struct{}),
 		consumerID: defaultConsumerID(),
 	}
-	go r.bootstrapLegacyShards()
 	go r.run()
 	return r, nil
 }
@@ -181,36 +180,9 @@ func (r *RTimeWheel) run() {
 	}
 }
 
-// bootstrapLegacyShards 启动时发现旧版本写入、未登记 registry 的分片。
-// 使用 Go 侧驱动的单步 SCAN（不阻塞 Redis），遇到停止信号即中止。
-func (r *RTimeWheel) bootstrapLegacyShards() {
-	ctx := context.Background()
-	cursor := "0"
-	for {
-		select {
-		case <-r.stopc:
-			return
-		default:
-		}
-		next, minutes, err := r.scripts.scanStep(ctx, cursor)
-		if err != nil {
-			log.Error("scan legacy shards", slog.Any("error", err))
-			return
-		}
-		for _, minute := range minutes {
-			if err := r.scripts.registerMinute(ctx, minute); err != nil {
-				log.Error("register legacy shard", slog.Any("error", err), slog.Any("minute", minute))
-			}
-		}
-		if next == "0" {
-			return
-		}
-		cursor = next
-	}
-}
-
 // tick 单次扫描：回收过期租约 -> 按 registry 领取各分钟分片到期任务。
 // tick 在 run goroutine 内同步执行，天然不叠加。
+// registry 由 AddTask/recover 在同一 Lua 内原子登记，是分片发现的唯一入口。
 func (r *RTimeWheel) tick() {
 	ctx := context.Background()
 	now := time.Now()
@@ -224,17 +196,9 @@ func (r *RTimeWheel) tick() {
 
 	avail := r.opts.maxConcurrency - int(r.inflight.Load())
 	if avail > 0 {
-		// 当前分钟无条件扫描：覆盖未登记 registry 的写入
-		// （旧版本实例写入 / 升级窗口），registry 提供其余分钟入口
-		minutes := []string{minuteStr}
-		regMinutes, err := r.scripts.listMinutes(ctx, now.UnixMilli(), r.opts.maxSlicesPerTick-1)
+		minutes, err := r.scripts.listMinutes(ctx, now.UnixMilli(), r.opts.maxSlicesPerTick)
 		if err != nil {
 			log.Error("list minutes", slog.Any("error", err))
-		}
-		for _, m := range regMinutes {
-			if m != minuteStr {
-				minutes = append(minutes, m)
-			}
 		}
 		batchID := r.nextBatchID()
 		for _, minute := range minutes {

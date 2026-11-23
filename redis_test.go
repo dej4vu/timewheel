@@ -3,8 +3,11 @@ package timewheel
 import (
 	"context"
 	"net"
+
 	"testing"
 	"time"
+
+	"github.com/demdxx/gocast"
 
 	"github.com/dej4vu/timewheel/pkg/redis"
 	"github.com/dej4vu/timewheel/pkg/redis/goredis"
@@ -28,22 +31,40 @@ func testStore(t *testing.T) redis.Store {
 	return goredis.NewClient(testNetwork, testAddress, "")
 }
 
+// testScanStepLua 测试自持的单步 SCAN 脚本（返回 [新游标, 分钟1, 分钟2, ...]）。
+// 生产代码已删除 legacy 分片发现，测试隔离仍需发现遗留分片，故内联在此。
+const testScanStepLua = `
+local res = redis.call('scan', ARGV[1], 'MATCH', 'timewheel_task_*', 'COUNT', 500)
+local out = { res[1] }
+for _, k in ipairs(res[2]) do
+    local minute = string.match(k, 'timewheel_task_%{(.*)%}')
+    if minute then
+        out[#out + 1] = minute
+    end
+end
+return out
+`
+
 // flushTimewheelKeys 清理全局 key 与全部分片 key（测试隔离用）。
 // 通过 SCAN 发现遗留分片，避免上一次运行/中断留下的旧任务污染断言。
 func flushTimewheelKeys(t *testing.T, store redis.Store, extraKeys ...string) {
 	t.Helper()
 	ctx := context.Background()
-	s := newRedisScripts(store)
 
 	keys := append([]string{registryKey, processingKey, deadKey}, extraKeys...)
 	cursor := "0"
 	for {
-		next, minutes, err := s.scanStep(ctx, cursor)
+		reply, err := store.Eval(ctx, testScanStepLua, nil, []interface{}{cursor})
 		if err != nil {
 			t.Fatalf("scan shards: %v", err)
 		}
-		for _, minute := range minutes {
-			keys = append(keys, pendingKey(minute), delSetKey(minute))
+		items := gocast.ToInterfaceSlice(reply)
+		if len(items) == 0 {
+			t.Fatalf("invalid scan reply: %v", reply)
+		}
+		next := gocast.ToString(items[0])
+		for _, minute := range items[1:] {
+			keys = append(keys, pendingKey(gocast.ToString(minute)), delSetKey(gocast.ToString(minute)))
 		}
 		if next == "0" {
 			break

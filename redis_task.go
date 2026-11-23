@@ -40,13 +40,11 @@ func NewRTaskElement(msg string, _type string) *RTaskElement {
 
 // envelope 是 pending/processing zset member 的解析结果。
 // member 格式：v1\x1f<key>\x1f<attempt>\x1f<claimID>\x1f<任务JSON>
-// 兼容旧格式：member 以 "{" 开头视为裸 JSON（Legacy=true），attempt 视为 0。
 type envelope struct {
 	Key     string
 	Attempt int
 	ClaimID string
 	Payload []byte
-	Legacy  bool
 }
 
 // encodeEnvelope 拼装信封 member
@@ -62,9 +60,6 @@ func encodeEnvelope(key string, attempt int, claimID string, payload []byte) str
 
 // decodeEnvelope 解析信封 member。段数不足、版本不符或 attempt 非数字时返回错误。
 func decodeEnvelope(member string) (envelope, error) {
-	if strings.HasPrefix(member, "{") {
-		return envelope{Payload: []byte(member), Legacy: true}, nil
-	}
 	seg := strings.SplitN(member, envelopeSep, envelopeSegs)
 	if len(seg) != envelopeSegs {
 		return envelope{}, fmt.Errorf("malformed envelope: expect %d segments, got %d", envelopeSegs, len(seg))
