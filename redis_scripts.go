@@ -112,24 +112,6 @@ func (s *redisScripts) listMinutes(ctx context.Context, nowMs int64, limit int) 
 	return gocast.ToStringSlice(reply), nil
 }
 
-// stats 读取统计快照
-func (s *redisScripts) stats(ctx context.Context, curMinuteStr string) (Stats, error) {
-	reply, err := s.store.Eval(ctx, redis.StatsLuaScript,
-		[]string{processingKey, deadKey, pendingKey(curMinuteStr)}, nil)
-	if err != nil {
-		return Stats{}, fmt.Errorf("failed to read stats: %w", err)
-	}
-	vals := gocast.ToInterfaceSlice(reply)
-	if len(vals) != 3 {
-		return Stats{}, fmt.Errorf("invalid stats reply: %v", reply)
-	}
-	return Stats{
-		ProcessingDepth: gocast.ToInt64(vals[0]),
-		DeadDepth:       gocast.ToInt64(vals[1]),
-		PendingDepth:    gocast.ToInt64(vals[2]),
-	}, nil
-}
-
 // deleteKeys 删除指定 key（测试与运维用）
 func (s *redisScripts) deleteKeys(ctx context.Context, keys ...string) error {
 	_, err := s.store.Eval(ctx, redis.DeleteKeysLuaScript, keys, nil)

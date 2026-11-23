@@ -25,7 +25,6 @@ func Test_LuaScript(t *testing.T) {
 		{"DeadTaskLuaScript", redis.DeadTaskLuaScript},
 		{"RecoverLeasesLuaScript", redis.RecoverLeasesLuaScript},
 		{"ZRangeByScoreLuaScript", redis.ZRangeByScoreLuaScript},
-		{"StatsLuaScript", redis.StatsLuaScript},
 		{"DeleteKeysLuaScript", redis.DeleteKeysLuaScript},
 		{"DeleteTaskLuaScript", redis.DeleteTaskLuaScript},
 	}

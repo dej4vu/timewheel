@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dej4vu/timewheel/pkg/redis"
 	"github.com/dej4vu/timewheel/pkg/util"
 )
 
@@ -22,7 +23,6 @@ func fastOpts(extra ...RTimeWheelOption) []RTimeWheelOption {
 		WithBackoff(50*time.Millisecond, 200*time.Millisecond),
 		WithClaimBatch(100),
 		WithMaxConcurrency(32),
-		WithStatsInterval(time.Hour), // 测试中默认关闭统计
 	}
 	return append(base, extra...)
 }
@@ -282,5 +282,55 @@ func TestRemoveTaskPending(t *testing.T) {
 	time.Sleep(1 * time.Second)
 	if n := calls.Load(); n != 0 {
 		t.Errorf("removed task executed %d times", n)
+	}
+}
+
+// ackBrokenStore 注入 ACK 脚本失败（其余调用透传真实 store）
+type ackBrokenStore struct {
+	redis.Store
+	failAck atomic.Bool
+}
+
+func (s *ackBrokenStore) Eval(ctx context.Context, src string, keys []string, args []interface{}) (interface{}, error) {
+	if src == redis.AckTaskLuaScript && s.failAck.Load() {
+		return nil, errors.New("injected ack failure")
+	}
+	return s.Store.Eval(ctx, src, keys, args)
+}
+
+func TestAckFailureReportsOutcome(t *testing.T) {
+	driver := testStore(t)
+	now := time.Now()
+	minute := util.GetTimeMinuteStr(now)
+	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
+
+	broken := &ackBrokenStore{Store: driver}
+	broken.failAck.Store(true)
+
+	rc := &resultCollector{}
+	handle := func(_ context.Context, task *RTaskElement) error { return nil }
+	tw, err := NewRTimeWheelWithOptions(broken, handle, append(fastOpts(WithResultHook(rc.hook)), WithLease(2*time.Second))...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tw.Stop()
+
+	if err := tw.AddTask(context.Background(), "ackfail-1", &RTaskElement{Msg: "m", Type: "t"}, now.Add(100*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+
+	// handler 成功但 ACK 注入失败 3 次：应报告 ack_failed（任务留 processing 由租约回收）
+	if !eventually(t, 5*time.Second, 50*time.Millisecond, func() bool {
+		return len(rc.byOutcome(OutcomeAckFailed)) == 1
+	}) {
+		t.Fatalf("no ack_failed outcome; results=%v", rc.results)
+	}
+
+	// 修复 ACK 后（取消注入），租约到期任务被回收重投并最终成功
+	broken.failAck.Store(false)
+	if !eventually(t, 5*time.Second, 50*time.Millisecond, func() bool {
+		return len(rc.byOutcome(OutcomeSuccess)) == 1
+	}) {
+		t.Fatalf("task not redelivered after ack failure; results=%v", rc.results)
 	}
 }

@@ -61,10 +61,6 @@ type RTimeWheel struct {
 	consumerID string
 	// 批次序号
 	batchSeq atomic.Int64
-	// 上次统计快照时间
-	lastStatsNano atomic.Int64
-	// 最近一次领取延迟（毫秒）
-	claimLagMs atomic.Int64
 }
 
 // NewRTimeWheel 构造 redis 实现的分布式时间轮（默认配置即可靠模式）
@@ -219,8 +215,6 @@ func (r *RTimeWheel) tick() {
 			avail -= len(claimed)
 		}
 	}
-
-	r.maybeStats(ctx, minuteStr)
 }
 
 // executeAndSettle 执行单笔任务并按结果结算（ACK / 租约延期 / 死信）
@@ -245,8 +239,6 @@ func (r *RTimeWheel) executeAndSettle(member string) {
 		r.settleDead(context.Background(), member, env, err, start)
 		return
 	}
-
-	r.observeLag(time.Now().UnixMilli() - task.ExecuteAtUnix*1000)
 
 	hctx, cancel := context.WithTimeout(context.Background(), r.opts.handlerTimeout)
 	defer cancel()
@@ -336,35 +328,6 @@ func (r *RTimeWheel) nextBatchID() string {
 	return fmt.Sprintf("%s-%d-%d", r.consumerID, time.Now().UnixNano(), r.batchSeq.Add(1))
 }
 
-// maybeStats 按统计间隔输出快照
-func (r *RTimeWheel) maybeStats(ctx context.Context, minuteStr string) {
-	hook := r.opts.statsHook
-	if hook == nil {
-		return
-	}
-	now := time.Now().UnixNano()
-	last := r.lastStatsNano.Load()
-	if now-last < int64(r.opts.statsInterval) {
-		return
-	}
-	if !r.lastStatsNano.CompareAndSwap(last, now) {
-		return
-	}
-	s, err := r.scripts.stats(ctx, minuteStr)
-	if err != nil {
-		log.Error("stats", slog.Any("error", err))
-		return
-	}
-	s.ClaimLagMs = r.claimLagMs.Load()
-	safeStatsHook(ctx, hook, s)
-}
-
-func (r *RTimeWheel) observeLag(lagMs int64) {
-	if lagMs > 0 {
-		r.claimLagMs.Store(lagMs)
-	}
-}
-
 func (r *RTimeWheel) emitResult(task *RTaskElement, attempt int, outcome Outcome, err error, duration time.Duration) {
 	if r.opts.resultHook == nil {
 		return
@@ -380,15 +343,6 @@ func safeResultHook(ctx context.Context, hook func(context.Context, TaskResult),
 		}
 	}()
 	hook(ctx, r)
-}
-
-func safeStatsHook(ctx context.Context, hook func(context.Context, Stats), s Stats) {
-	defer func() {
-		if p := recover(); p != nil {
-			log.Error("stats hook panic", slog.Any("panic", p))
-		}
-	}()
-	hook(ctx, s)
 }
 
 // defaultConsumerID 生成消费者标识：hostname-pid

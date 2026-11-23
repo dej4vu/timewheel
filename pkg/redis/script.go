@@ -35,10 +35,6 @@ var (
 	//go:embed lua/zrangebyscore.lua
 	ZRangeByScoreLuaScript string
 
-	// 统计快照 lua 脚本
-	//go:embed lua/stats.lua
-	StatsLuaScript string
-
 	// 删除指定 keys lua 脚本（测试与运维）
 	//go:embed lua/delete_keys.lua
 	DeleteKeysLuaScript string

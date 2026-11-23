@@ -18,9 +18,7 @@ type RTimeWheelOptions struct {
 	backoffBase      time.Duration
 	backoffMax       time.Duration
 	deadRetention    time.Duration
-	statsInterval    time.Duration
 	resultHook       func(context.Context, TaskResult)
-	statsHook        func(context.Context, Stats)
 }
 
 // RTimeWheelOption 时间轮配置选项
@@ -74,19 +72,9 @@ func WithDeadRetention(d time.Duration) RTimeWheelOption {
 	return func(o *RTimeWheelOptions) { o.deadRetention = d }
 }
 
-// WithStatsInterval 统计快照间隔，默认 10s
-func WithStatsInterval(d time.Duration) RTimeWheelOption {
-	return func(o *RTimeWheelOptions) { o.statsInterval = d }
-}
-
 // WithResultHook 设置单笔任务结果钩子
 func WithResultHook(hook func(context.Context, TaskResult)) RTimeWheelOption {
 	return func(o *RTimeWheelOptions) { o.resultHook = hook }
-}
-
-// WithStatsHook 设置周期统计钩子
-func WithStatsHook(hook func(context.Context, Stats)) RTimeWheelOption {
-	return func(o *RTimeWheelOptions) { o.statsHook = hook }
 }
 
 // newRTimeWheelOptions 构造并校验配置
@@ -102,7 +90,6 @@ func newRTimeWheelOptions(opts ...RTimeWheelOption) (*RTimeWheelOptions, error) 
 		backoffBase:      time.Second,
 		backoffMax:       time.Minute,
 		deadRetention:    7 * 24 * time.Hour,
-		statsInterval:    10 * time.Second,
 	}
 	for _, opt := range opts {
 		opt(o)
@@ -144,9 +131,6 @@ func (o *RTimeWheelOptions) validate() error {
 	}
 	if o.deadRetention <= 0 {
 		return fmt.Errorf("timewheel: deadRetention must be positive, got %v", o.deadRetention)
-	}
-	if o.statsInterval <= 0 {
-		return fmt.Errorf("timewheel: statsInterval must be positive, got %v", o.statsInterval)
 	}
 	return nil
 }

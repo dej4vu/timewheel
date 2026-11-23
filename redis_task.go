@@ -112,11 +112,3 @@ type TaskResult struct {
 	Err      error
 	Duration time.Duration
 }
-
-// Stats 是周期性统计快照
-type Stats struct {
-	PendingDepth    int64 // 当前分钟分片深度
-	ProcessingDepth int64 // 在途（含重试等待）深度
-	DeadDepth       int64 // 死信深度
-	ClaimLagMs      int64 // 本统计周期内领取任务的执行延迟（now - executeAt）
-}
