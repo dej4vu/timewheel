@@ -85,10 +85,6 @@ tw, err := timewheel.NewRTimeWheelWithOptions(client, handle,
         // Outcome: success | retry_scheduled | dead_lettered | ack_failed | removed
         metrics.Count(string(r.Outcome), 1)
     }),
-    timewheel.WithStatsHook(func(ctx context.Context, s timewheel.Stats) {
-        // Pending/Processing/Dead 深度与领取延迟
-        metrics.Gauge("timewheel.dead", float64(s.DeadDepth))
-    }),
 )
 
 // 优雅停止：等待在途任务结算
@@ -112,7 +108,6 @@ if err := tw.Shutdown(shutdownCtx); err != nil {
 | `MaxAttempts` | 10 | 含首次执行的最大尝试次数；设 1 关闭重试 |
 | `Backoff` | 1s / 1m | 指数退避 base/max + ±20% 抖动 |
 | `DeadRetention` | 7d | 死信保留时长 |
-| `StatsInterval` | 10s | 统计快照间隔 |
 
 ### 死信处理
 
@@ -132,9 +127,17 @@ redis-cli ZADD timewheel_registry <当前分钟起始ms> "<当前分钟>"
 - 重试等待期间对同 key 重复 `AddTask` 会产生一条新任务（attempt=0），与旧重试任务并存。
 - Redis 版不做租约续期（heartbeat）；长任务场景请调大 `Lease` 或拆分任务。
 
-## 升级说明（从旧版本）
+## 测试
 
-旧版本的分钟分片任务（裸 JSON member、秒级 score）可被新版本直接消费：领取时自动信封化、attempt 从 1 起算、秒级 score 视为已到期立即执行。**无需 drain，平滑升级**。
+测试分三层，引擎控制流不依赖真实 Redis：
+
+- **纯单测**：信封编解码、配置校验、退避计算；
+- **fake Store 引擎测试**：结算分支、panic、ACK 重试、领取限流、Shutdown 顺序——进程内 fake 驱动，确定性、毫秒级；
+- **真 Redis 集成**：Lua 语义与端到端行为（执行时机、崩溃恢复、删除、并发领取）。Redis 不可达时自动 skip。
+
+```sh
+go test -race ./...   # 需本机 redis-server（默认 localhost:6379）
+```
 
 ## 多实例压测示例
 
