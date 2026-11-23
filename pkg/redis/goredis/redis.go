@@ -54,11 +54,6 @@ func (c *Client) getCliet() *redis.Client {
 	return redis.NewClient(opt)
 }
 
-func (c *Client) SAdd(ctx context.Context, key, val string) (int, error) {
-	resp, err := c.rdb.SAdd(ctx, key, val).Result()
-	return int(resp), err
-}
-
 // Eval 支持使用 lua 脚本.
 func (c *Client) Eval(ctx context.Context, src string, keys []string, args []interface{}) (interface{}, error) {
 	resp, err := c.rdb.Eval(ctx, src, keys, args...).Result()
