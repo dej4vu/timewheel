@@ -25,7 +25,7 @@ func (s *ackBrokenStore) Eval(ctx context.Context, src string, keys []string, ar
 }
 
 func TestStatsHookSnapshot(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	minute := util.GetTimeMinuteStr(now)
 	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
@@ -64,7 +64,7 @@ func TestStatsHookSnapshot(t *testing.T) {
 }
 
 func TestAckFailureReportsOutcome(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	minute := util.GetTimeMinuteStr(now)
 	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))

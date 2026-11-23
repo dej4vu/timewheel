@@ -52,8 +52,7 @@ func (c *resultCollector) byOutcome(o Outcome) []TaskResult {
 }
 
 func Test_EngineEndToEnd(t *testing.T) {
-	stores := testStores(t)
-	driver := stores[0] // goredis
+	driver := testStore(t)
 	now := time.Now()
 	minute := util.GetTimeMinuteStr(now)
 	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
@@ -110,7 +109,7 @@ func Test_EngineEndToEnd(t *testing.T) {
 }
 
 func Test_NotEarlierThanExecuteAt(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	executeAt := now.Add(1500 * time.Millisecond) // 亚秒执行时间
 	minute := util.GetTimeMinuteStr(executeAt)
@@ -149,7 +148,7 @@ func Test_NotEarlierThanExecuteAt(t *testing.T) {
 }
 
 func TestRetryWithBackoff(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	minute := util.GetTimeMinuteStr(now)
 	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
@@ -189,7 +188,7 @@ func TestRetryWithBackoff(t *testing.T) {
 }
 
 func TestDeadLetterAfterMaxAttempts(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	minute := util.GetTimeMinuteStr(now)
 	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
@@ -222,7 +221,7 @@ func TestDeadLetterAfterMaxAttempts(t *testing.T) {
 }
 
 func TestHandlerPanicCountsAsFailure(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	minute := util.GetTimeMinuteStr(now)
 	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
@@ -255,7 +254,7 @@ func TestHandlerPanicCountsAsFailure(t *testing.T) {
 }
 
 func TestRemoveTaskPending(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	executeAt := now.Add(400 * time.Millisecond)
 	minute := util.GetTimeMinuteStr(executeAt)

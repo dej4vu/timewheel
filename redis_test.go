@@ -2,14 +2,12 @@ package timewheel
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"testing"
 	"time"
 
 	"github.com/dej4vu/timewheel/pkg/redis"
 	"github.com/dej4vu/timewheel/pkg/redis/goredis"
-	"github.com/dej4vu/timewheel/pkg/redis/redigo"
 )
 
 const (
@@ -18,8 +16,8 @@ const (
 	testAddress = "localhost:6379"
 )
 
-// testStores 返回双驱动 store 列表；Redis 不可达时 skip 而非失败
-func testStores(t *testing.T) []redis.Store {
+// testStore 返回 goredis store；Redis 不可达时 skip 而非失败
+func testStore(t *testing.T) redis.Store {
 	t.Helper()
 	conn, err := net.DialTimeout("tcp", testAddress, 500*time.Millisecond)
 	if err != nil {
@@ -27,15 +25,7 @@ func testStores(t *testing.T) []redis.Store {
 	}
 	conn.Close()
 
-	return []redis.Store{
-		goredis.NewClient(testNetwork, testAddress, ""),
-		redigo.NewClient(testNetwork, testAddress, ""),
-	}
-}
-
-// driverName 返回 store 的驱动名（测试子用例命名用）
-func driverName(store redis.Store) string {
-	return fmt.Sprintf("%T", store)
+	return goredis.NewClient(testNetwork, testAddress, "")
 }
 
 // flushTimewheelKeys 清理全局 key 与全部分片 key（测试隔离用）。

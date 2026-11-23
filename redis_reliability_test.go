@@ -15,7 +15,7 @@ import (
 )
 
 func TestCrashRecoveryByLease(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	minute := util.GetTimeMinuteStr(now)
 	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
@@ -61,7 +61,7 @@ func TestCrashRecoveryByLease(t *testing.T) {
 }
 
 func TestNoDuplicateWithinLease(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	minute := util.GetTimeMinuteStr(now)
 	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
@@ -98,7 +98,7 @@ func TestNoDuplicateWithinLease(t *testing.T) {
 }
 
 func TestGracefulShutdownWaits(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	minute := util.GetTimeMinuteStr(now)
 	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
@@ -144,7 +144,7 @@ func TestGracefulShutdownWaits(t *testing.T) {
 }
 
 func TestShutdownTimeoutLeavesSettling(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	minute := util.GetTimeMinuteStr(now)
 	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
@@ -185,7 +185,7 @@ func TestShutdownTimeoutLeavesSettling(t *testing.T) {
 }
 
 func TestBacklogAcrossMinutes(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	// 任务挂在 3 分钟前的旧分片（宕机积压场景）
 	executeAt := time.Now().Add(-3 * time.Minute)
 	minute := util.GetTimeMinuteStr(executeAt)
@@ -213,7 +213,7 @@ func TestBacklogAcrossMinutes(t *testing.T) {
 }
 
 func TestTickNoStacking(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	minute := util.GetTimeMinuteStr(now)
 	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
@@ -251,7 +251,7 @@ func TestTickNoStacking(t *testing.T) {
 }
 
 func TestMultiInstanceExclusiveClaim(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	minute := util.GetTimeMinuteStr(now)
 	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
@@ -304,7 +304,7 @@ func TestMultiInstanceExclusiveClaim(t *testing.T) {
 }
 
 func TestRemoveWhileProcessing(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	minute := util.GetTimeMinuteStr(now)
 	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
@@ -348,7 +348,7 @@ func TestRemoveWhileProcessing(t *testing.T) {
 }
 
 func TestLegacyMemberUpgrade(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	minute := util.GetTimeMinuteStr(now)
 	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
@@ -389,7 +389,7 @@ func TestLegacyMemberUpgrade(t *testing.T) {
 }
 
 func TestMalformedMemberNotExecuted(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	minute := util.GetTimeMinuteStr(now)
 	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
@@ -428,7 +428,7 @@ func TestMalformedMemberNotExecuted(t *testing.T) {
 // TestLegacyShardDiscovery 升级兼容：旧版本写入的分片没有 registry 条目，
 // 引擎必须仍能发现并执行（当前分钟分片 + 历史滞留分片两条路径）
 func TestLegacyShardDiscovery(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	curMinute := util.GetTimeMinuteStr(now)
 	pastMinute := util.GetTimeMinuteStr(now.Add(-2 * time.Minute))
@@ -493,7 +493,7 @@ func (s *claimBlockingStore) Eval(ctx context.Context, src string, keys []string
 // TestShutdownWaitsForFinalTickClaim 回归：Shutdown 必须等待"最后一个 tick
 // 刚领取、尚未 wg.Add 完成"的任务结算，不得提前返回（Add 与 Wait 并发误用）
 func TestShutdownWaitsForFinalTickClaim(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	minute := util.GetTimeMinuteStr(now)
 	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))

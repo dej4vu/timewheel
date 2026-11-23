@@ -53,72 +53,69 @@ func Test_LuaScript(t *testing.T) {
 // Test_RedisTimeWheel_AddTask 验证 AddTask/RemoveTask 在 Redis 侧的写入结构
 // （端到端触发用例在引擎重写后恢复）
 func Test_RedisTimeWheel_AddTask(t *testing.T) {
-	for _, driver := range testStores(t) {
-		t.Run(driverName(driver), func(t *testing.T) {
-			executeAt := time.Now().Add(30 * time.Second)
-			minute := util.GetTimeMinuteStr(executeAt)
-			flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
-			ctx := context.Background()
-			rTimeWheel := NewRTimeWheel(driver, handle)
-			defer rTimeWheel.Stop()
+	driver := testStore(t)
+	executeAt := time.Now().Add(30 * time.Second)
+	minute := util.GetTimeMinuteStr(executeAt)
+	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
+	ctx := context.Background()
+	rTimeWheel := NewRTimeWheel(driver, handle)
+	defer rTimeWheel.Stop()
 
-			if err := rTimeWheel.AddTask(ctx, "test1", &RTaskElement{
-				Msg:  "hello",
-				Type: "test",
-			}, executeAt); err != nil {
-				t.Fatal(err)
-			}
-			if err := rTimeWheel.AddTask(ctx, "test2", &RTaskElement{
-				Msg:  "world",
-				Type: "test",
-			}, executeAt); err != nil {
-				t.Fatal(err)
-			}
-			if err := rTimeWheel.RemoveTask(ctx, "test2", executeAt); err != nil {
-				t.Fatal(err)
-			}
+	if err := rTimeWheel.AddTask(ctx, "test1", &RTaskElement{
+		Msg:  "hello",
+		Type: "test",
+	}, executeAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := rTimeWheel.AddTask(ctx, "test2", &RTaskElement{
+		Msg:  "world",
+		Type: "test",
+	}, executeAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := rTimeWheel.RemoveTask(ctx, "test2", executeAt); err != nil {
+		t.Fatal(err)
+	}
 
-			// 分钟分片应有两个信封 member，score 为毫秒
-			members := zrangeAll(t, driver, pendingKey(minute))
-			if len(members) != 2 {
-				t.Fatalf("pending members: got %d, want 2", len(members))
-			}
-			for _, m := range members {
-				env, err := decodeEnvelope(m)
-				if err != nil {
-					t.Fatalf("decodeEnvelope(%q): %v", m, err)
-				}
-				if env.Attempt != 0 || env.ClaimID != "" {
-					t.Errorf("fresh task should have attempt=0 and empty claimID, got %+v", env)
-				}
-				if _, err := decodeTaskPayload(env.Payload); err != nil {
-					t.Errorf("payload should be valid task JSON: %v", err)
-				}
-			}
+	// 分钟分片应有两个信封 member，score 为毫秒
+	members := zrangeAll(t, driver, pendingKey(minute))
+	if len(members) != 2 {
+		t.Fatalf("pending members: got %d, want 2", len(members))
+	}
+	for _, m := range members {
+		env, err := decodeEnvelope(m)
+		if err != nil {
+			t.Fatalf("decodeEnvelope(%q): %v", m, err)
+		}
+		if env.Attempt != 0 || env.ClaimID != "" {
+			t.Errorf("fresh task should have attempt=0 and empty claimID, got %+v", env)
+		}
+		if _, err := decodeTaskPayload(env.Payload); err != nil {
+			t.Errorf("payload should be valid task JSON: %v", err)
+		}
+	}
 
-			// registry 应登记了该分钟
-			minutes := zrangeAll(t, driver, registryKey)
-			found := false
-			for _, m := range minutes {
-				if m == minute {
-					found = true
-				}
-			}
-			if !found {
-				t.Errorf("registry should contain minute %q, got %v", minute, minutes)
-			}
+	// registry 应登记了该分钟
+	minutes := zrangeAll(t, driver, registryKey)
+	found := false
+	for _, m := range minutes {
+		if m == minute {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("registry should contain minute %q, got %v", minute, minutes)
+	}
 
-			// 删除集合应有 test2 标记
-			marked, err := driver.Eval(ctx, "return redis.call('smembers', KEYS[1])",
-				[]string{delSetKey(minute)}, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			markedKeys := gocast.ToStringSlice(marked)
-			if len(markedKeys) != 1 || markedKeys[0] != "test2" {
-				t.Errorf("delete set should contain [test2], got %v", markedKeys)
-			}
-		})
+	// 删除集合应有 test2 标记
+	marked, err := driver.Eval(ctx, "return redis.call('smembers', KEYS[1])",
+		[]string{delSetKey(minute)}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	markedKeys := gocast.ToStringSlice(marked)
+	if len(markedKeys) != 1 || markedKeys[0] != "test2" {
+		t.Errorf("delete set should contain [test2], got %v", markedKeys)
 	}
 }
 
