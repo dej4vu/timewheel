@@ -42,23 +42,13 @@ for i, m in ipairs(due) do
     local key = nil
     local attempt = nil
     local payload = nil
-    if string.sub(m, 1, 1) == '{' then
-        -- 旧格式裸 JSON（平滑升级路径）：解码提取业务 key
-        local ok, j = pcall(cjson.decode, m)
-        if ok and type(j) == 'table' and j.key ~= nil then
-            key = tostring(j.key)
-            attempt = 0
-            payload = m
-        end
-    else
-        local seg = split5(m)
-        if seg ~= nil and seg[1] == 'v1' then
-            local a = tonumber(seg[3])
-            if a ~= nil then
-                key = seg[2]
-                attempt = a
-                payload = seg[5]
-            end
+    local seg = split5(m)
+    if seg ~= nil and seg[1] == 'v1' then
+        local a = tonumber(seg[3])
+        if a ~= nil then
+            key = seg[2]
+            attempt = a
+            payload = seg[5]
         end
     end
 

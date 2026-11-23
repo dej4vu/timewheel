@@ -24,9 +24,6 @@ func TestEnvelopeRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("decodeEnvelope: %v", err)
 			}
-			if env.Legacy {
-				t.Fatalf("expected non-legacy envelope")
-			}
 			if env.Key != tt.key {
 				t.Errorf("key: got %q, want %q", env.Key, tt.key)
 			}
@@ -62,20 +59,11 @@ func TestEnvelopeKeyWithPipeAndChinese(t *testing.T) {
 	}
 }
 
-func TestDecodeLegacyJSONMember(t *testing.T) {
+func TestDecodeRejectsLegacyJSON(t *testing.T) {
+	// legacy 升级机制已删除：裸 JSON 成员一律视为非法，不再宽容解析
 	legacy := `{"key":"k1","msg":"m","type":"t","executeAtUnix":1700000000}`
-	env, err := decodeEnvelope(legacy)
-	if err != nil {
-		t.Fatalf("decodeEnvelope: %v", err)
-	}
-	if !env.Legacy {
-		t.Fatalf("expected legacy envelope for raw JSON member")
-	}
-	if string(env.Payload) != legacy {
-		t.Errorf("legacy payload should be the raw member, got %q", env.Payload)
-	}
-	if env.Key != "" || env.Attempt != 0 || env.ClaimID != "" {
-		t.Errorf("legacy envelope fields should be zero values, got %+v", env)
+	if _, err := decodeEnvelope(legacy); err == nil {
+		t.Fatal("bare-JSON member must be rejected after legacy removal")
 	}
 }
 

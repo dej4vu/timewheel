@@ -35,21 +35,9 @@ var (
 	//go:embed lua/zrangebyscore.lua
 	ZRangeByScoreLuaScript string
 
-	// 统计快照 lua 脚本
-	//go:embed lua/stats.lua
-	StatsLuaScript string
-
 	// 删除指定 keys lua 脚本（测试与运维）
 	//go:embed lua/delete_keys.lua
 	DeleteKeysLuaScript string
-
-	// 单步 SCAN lua 脚本（legacy 分片发现，Go 侧循环驱动）
-	//go:embed lua/scan_step.lua
-	ScanStepLuaScript string
-
-	// 非空分钟分片登记 registry lua 脚本（升级 bootstrap）
-	//go:embed lua/register_minute.lua
-	RegisterMinuteLuaScript string
 
 	// 删除任务 lua 脚本（删除集合标记）
 	//go:embed lua/delete_task.lua

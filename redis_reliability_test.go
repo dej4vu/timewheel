@@ -15,7 +15,7 @@ import (
 )
 
 func TestCrashRecoveryByLease(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	minute := util.GetTimeMinuteStr(now)
 	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
@@ -61,7 +61,7 @@ func TestCrashRecoveryByLease(t *testing.T) {
 }
 
 func TestNoDuplicateWithinLease(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	minute := util.GetTimeMinuteStr(now)
 	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
@@ -98,7 +98,7 @@ func TestNoDuplicateWithinLease(t *testing.T) {
 }
 
 func TestGracefulShutdownWaits(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	minute := util.GetTimeMinuteStr(now)
 	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
@@ -144,7 +144,7 @@ func TestGracefulShutdownWaits(t *testing.T) {
 }
 
 func TestShutdownTimeoutLeavesSettling(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	minute := util.GetTimeMinuteStr(now)
 	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
@@ -185,7 +185,7 @@ func TestShutdownTimeoutLeavesSettling(t *testing.T) {
 }
 
 func TestBacklogAcrossMinutes(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	// 任务挂在 3 分钟前的旧分片（宕机积压场景）
 	executeAt := time.Now().Add(-3 * time.Minute)
 	minute := util.GetTimeMinuteStr(executeAt)
@@ -213,7 +213,7 @@ func TestBacklogAcrossMinutes(t *testing.T) {
 }
 
 func TestTickNoStacking(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	minute := util.GetTimeMinuteStr(now)
 	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
@@ -251,7 +251,7 @@ func TestTickNoStacking(t *testing.T) {
 }
 
 func TestMultiInstanceExclusiveClaim(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	minute := util.GetTimeMinuteStr(now)
 	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
@@ -304,7 +304,7 @@ func TestMultiInstanceExclusiveClaim(t *testing.T) {
 }
 
 func TestRemoveWhileProcessing(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	minute := util.GetTimeMinuteStr(now)
 	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
@@ -347,49 +347,8 @@ func TestRemoveWhileProcessing(t *testing.T) {
 	}
 }
 
-func TestLegacyMemberUpgrade(t *testing.T) {
-	driver := testStores(t)[0]
-	now := time.Now()
-	minute := util.GetTimeMinuteStr(now)
-	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
-
-	// 手写旧格式：裸 JSON member + 秒级 score + registry 登记
-	s := newRedisScripts(driver)
-	legacy := `{"key":"legacy-up-1","msg":"m","type":"t","executeAtUnix":` + fmt.Sprint(now.Add(-3*time.Second).Unix()) + `}`
-	if err := s.pushRaw(context.Background(), pendingKey(minute), now.Add(-3*time.Second).Unix(), legacy); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.pushRaw(context.Background(), registryKey, util.MinuteStartMs(now), minute); err != nil {
-		t.Fatal(err)
-	}
-
-	rc := &resultCollector{}
-	var gotKey atomic.Value
-	handle := func(_ context.Context, task *RTaskElement) error {
-		gotKey.Store(task.Key)
-		return nil
-	}
-	tw, err := NewRTimeWheelWithOptions(driver, handle, fastOpts(WithResultHook(rc.hook))...)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tw.Stop()
-
-	if !eventually(t, 5*time.Second, 50*time.Millisecond, func() bool {
-		return len(rc.byOutcome(OutcomeSuccess)) == 1
-	}) {
-		t.Fatalf("legacy member not consumed; results=%v", rc.results)
-	}
-	if k, _ := gotKey.Load().(string); k != "legacy-up-1" {
-		t.Errorf("legacy task key: got %q", k)
-	}
-	if succ := rc.byOutcome(OutcomeSuccess)[0]; succ.Attempt != 1 {
-		t.Errorf("legacy attempt: got %d, want 1", succ.Attempt)
-	}
-}
-
 func TestMalformedMemberNotExecuted(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	minute := util.GetTimeMinuteStr(now)
 	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
@@ -425,52 +384,6 @@ func TestMalformedMemberNotExecuted(t *testing.T) {
 	}
 }
 
-// TestLegacyShardDiscovery 升级兼容：旧版本写入的分片没有 registry 条目，
-// 引擎必须仍能发现并执行（当前分钟分片 + 历史滞留分片两条路径）
-func TestLegacyShardDiscovery(t *testing.T) {
-	driver := testStores(t)[0]
-	now := time.Now()
-	curMinute := util.GetTimeMinuteStr(now)
-	pastMinute := util.GetTimeMinuteStr(now.Add(-2 * time.Minute))
-	flushTimewheelKeys(t, driver, pendingKey(curMinute), pendingKey(pastMinute), delSetKey(curMinute), delSetKey(pastMinute))
-
-	// 不登记 registry，仅写入旧格式分片（模拟旧版本实例的写入）
-	s := newRedisScripts(driver)
-	ctx := context.Background()
-	legacyCur := `{"key":"legacy-cur","msg":"m","type":"t","executeAtUnix":` + fmt.Sprint(now.Add(-time.Second).Unix()) + `}`
-	legacyPast := `{"key":"legacy-past","msg":"m","type":"t","executeAtUnix":` + fmt.Sprint(now.Add(-2*time.Minute).Unix()) + `}`
-	if err := s.pushRaw(ctx, pendingKey(curMinute), now.Add(-time.Second).UnixMilli(), legacyCur); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.pushRaw(ctx, pendingKey(pastMinute), now.Add(-2*time.Minute).Unix(), legacyPast); err != nil {
-		t.Fatal(err)
-	}
-
-	var mu sync.Mutex
-	got := map[string]bool{}
-	handle := func(_ context.Context, task *RTaskElement) error {
-		mu.Lock()
-		defer mu.Unlock()
-		got[task.Key] = true
-		return nil
-	}
-	tw, err := NewRTimeWheelWithOptions(driver, handle, fastOpts()...)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tw.Stop()
-
-	if !eventually(t, 8*time.Second, 100*time.Millisecond, func() bool {
-		mu.Lock()
-		defer mu.Unlock()
-		return got["legacy-cur"] && got["legacy-past"]
-	}) {
-		mu.Lock()
-		defer mu.Unlock()
-		t.Fatalf("legacy shards without registry entries not discovered: %v", got)
-	}
-}
-
 // claimBlockingStore 在 claim 脚本执行前阻塞，用于确定性复现
 // Shutdown 与 run goroutine 内 tick 的 Add/Wait 竞态
 type claimBlockingStore struct {
@@ -493,7 +406,7 @@ func (s *claimBlockingStore) Eval(ctx context.Context, src string, keys []string
 // TestShutdownWaitsForFinalTickClaim 回归：Shutdown 必须等待"最后一个 tick
 // 刚领取、尚未 wg.Add 完成"的任务结算，不得提前返回（Add 与 Wait 并发误用）
 func TestShutdownWaitsForFinalTickClaim(t *testing.T) {
-	driver := testStores(t)[0]
+	driver := testStore(t)
 	now := time.Now()
 	minute := util.GetTimeMinuteStr(now)
 	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
@@ -548,5 +461,40 @@ func TestShutdownWaitsForFinalTickClaim(t *testing.T) {
 		}
 	case <-time.After(6 * time.Second):
 		t.Fatal("Shutdown did not return")
+	}
+}
+
+// TestUnregisteredShardNotScanned 固化 registry 驱动的不变式：
+// 未登记 registry 的分片成员不得被领取执行。
+// （AddTask/recover 均在同脚本内原子登记 registry，正常路径不存在未登记分片；
+// 本用例钉死"删无条件当前分钟扫描"后的行为契约。）
+func TestUnregisteredShardNotScanned(t *testing.T) {
+	driver := testStore(t)
+	now := time.Now()
+	minute := util.GetTimeMinuteStr(now)
+	flushTimewheelKeys(t, driver, pendingKey(minute), delSetKey(minute))
+
+	var calls atomic.Int64
+	handle := func(_ context.Context, task *RTaskElement) error {
+		calls.Add(1)
+		return nil
+	}
+	tw, err := NewRTimeWheelWithOptions(driver, handle, fastOpts()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tw.Stop()
+
+	// 已到期成员挂入当前分钟分片，但不登记 registry
+	s := newRedisScripts(driver)
+	ctx := context.Background()
+	if err := s.pushRaw(ctx, pendingKey(minute), now.Add(-time.Second).UnixMilli(),
+		encodeEnvelope("ghost", 0, "", newPayload("ghost"))); err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+	if n := calls.Load(); n != 0 {
+		t.Fatalf("unregistered shard member executed %d times, want 0", n)
 	}
 }

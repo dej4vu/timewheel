@@ -14,7 +14,6 @@ type ClientOptions struct {
 	IdleTimeoutSeconds int
 	MaxActive          int
 	Wait               bool
-	DB                 int
 	// 必填参数
 	Network  string
 	Address  string
@@ -44,12 +43,6 @@ func WithMaxActive(maxActive int) ClientOption {
 func WithWaitMode() ClientOption {
 	return func(c *ClientOptions) {
 		c.Wait = true
-	}
-}
-
-func WithDB(db int) ClientOption {
-	return func(c *ClientOptions) {
-		c.DB = db
 	}
 }
 

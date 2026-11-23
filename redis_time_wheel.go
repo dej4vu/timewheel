@@ -61,10 +61,6 @@ type RTimeWheel struct {
 	consumerID string
 	// 批次序号
 	batchSeq atomic.Int64
-	// 上次统计快照时间
-	lastStatsNano atomic.Int64
-	// 最近一次领取延迟（毫秒）
-	claimLagMs atomic.Int64
 }
 
 // NewRTimeWheel 构造 redis 实现的分布式时间轮（默认配置即可靠模式）
@@ -92,7 +88,6 @@ func NewRTimeWheelWithOptions(store redis.Store, handle func(context.Context, *R
 		runDone:    make(chan struct{}),
 		consumerID: defaultConsumerID(),
 	}
-	go r.bootstrapLegacyShards()
 	go r.run()
 	return r, nil
 }
@@ -181,36 +176,9 @@ func (r *RTimeWheel) run() {
 	}
 }
 
-// bootstrapLegacyShards 启动时发现旧版本写入、未登记 registry 的分片。
-// 使用 Go 侧驱动的单步 SCAN（不阻塞 Redis），遇到停止信号即中止。
-func (r *RTimeWheel) bootstrapLegacyShards() {
-	ctx := context.Background()
-	cursor := "0"
-	for {
-		select {
-		case <-r.stopc:
-			return
-		default:
-		}
-		next, minutes, err := r.scripts.scanStep(ctx, cursor)
-		if err != nil {
-			log.Error("scan legacy shards", slog.Any("error", err))
-			return
-		}
-		for _, minute := range minutes {
-			if err := r.scripts.registerMinute(ctx, minute); err != nil {
-				log.Error("register legacy shard", slog.Any("error", err), slog.Any("minute", minute))
-			}
-		}
-		if next == "0" {
-			return
-		}
-		cursor = next
-	}
-}
-
 // tick 单次扫描：回收过期租约 -> 按 registry 领取各分钟分片到期任务。
 // tick 在 run goroutine 内同步执行，天然不叠加。
+// registry 由 AddTask/recover 在同一 Lua 内原子登记，是分片发现的唯一入口。
 func (r *RTimeWheel) tick() {
 	ctx := context.Background()
 	now := time.Now()
@@ -224,17 +192,9 @@ func (r *RTimeWheel) tick() {
 
 	avail := r.opts.maxConcurrency - int(r.inflight.Load())
 	if avail > 0 {
-		// 当前分钟无条件扫描：覆盖未登记 registry 的写入
-		// （旧版本实例写入 / 升级窗口），registry 提供其余分钟入口
-		minutes := []string{minuteStr}
-		regMinutes, err := r.scripts.listMinutes(ctx, now.UnixMilli(), r.opts.maxSlicesPerTick-1)
+		minutes, err := r.scripts.listMinutes(ctx, now.UnixMilli(), r.opts.maxSlicesPerTick)
 		if err != nil {
 			log.Error("list minutes", slog.Any("error", err))
-		}
-		for _, m := range regMinutes {
-			if m != minuteStr {
-				minutes = append(minutes, m)
-			}
 		}
 		batchID := r.nextBatchID()
 		for _, minute := range minutes {
@@ -255,8 +215,6 @@ func (r *RTimeWheel) tick() {
 			avail -= len(claimed)
 		}
 	}
-
-	r.maybeStats(ctx, minuteStr)
 }
 
 // executeAndSettle 执行单笔任务并按结果结算（ACK / 租约延期 / 死信）
@@ -281,8 +239,6 @@ func (r *RTimeWheel) executeAndSettle(member string) {
 		r.settleDead(context.Background(), member, env, err, start)
 		return
 	}
-
-	r.observeLag(time.Now().UnixMilli() - task.ExecuteAtUnix*1000)
 
 	hctx, cancel := context.WithTimeout(context.Background(), r.opts.handlerTimeout)
 	defer cancel()
@@ -372,35 +328,6 @@ func (r *RTimeWheel) nextBatchID() string {
 	return fmt.Sprintf("%s-%d-%d", r.consumerID, time.Now().UnixNano(), r.batchSeq.Add(1))
 }
 
-// maybeStats 按统计间隔输出快照
-func (r *RTimeWheel) maybeStats(ctx context.Context, minuteStr string) {
-	hook := r.opts.statsHook
-	if hook == nil {
-		return
-	}
-	now := time.Now().UnixNano()
-	last := r.lastStatsNano.Load()
-	if now-last < int64(r.opts.statsInterval) {
-		return
-	}
-	if !r.lastStatsNano.CompareAndSwap(last, now) {
-		return
-	}
-	s, err := r.scripts.stats(ctx, minuteStr)
-	if err != nil {
-		log.Error("stats", slog.Any("error", err))
-		return
-	}
-	s.ClaimLagMs = r.claimLagMs.Load()
-	safeStatsHook(ctx, hook, s)
-}
-
-func (r *RTimeWheel) observeLag(lagMs int64) {
-	if lagMs > 0 {
-		r.claimLagMs.Store(lagMs)
-	}
-}
-
 func (r *RTimeWheel) emitResult(task *RTaskElement, attempt int, outcome Outcome, err error, duration time.Duration) {
 	if r.opts.resultHook == nil {
 		return
@@ -416,15 +343,6 @@ func safeResultHook(ctx context.Context, hook func(context.Context, TaskResult),
 		}
 	}()
 	hook(ctx, r)
-}
-
-func safeStatsHook(ctx context.Context, hook func(context.Context, Stats), s Stats) {
-	defer func() {
-		if p := recover(); p != nil {
-			log.Error("stats hook panic", slog.Any("panic", p))
-		}
-	}()
-	hook(ctx, s)
 }
 
 // defaultConsumerID 生成消费者标识：hostname-pid
